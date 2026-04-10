@@ -1,6 +1,7 @@
 import os
 import pickle
 import argparse
+import re
 from tqdm import tqdm
 from multiprocessing.pool import Pool
 from occwl.io import load_step
@@ -24,7 +25,20 @@ from concurrent.futures import ProcessPoolExecutor
 
 # To speed up processing, define maximum threshold
 MAX_FACE = 70
-OUTPUT = os.path.join('GeomDatasets', 'custom_parsed')
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def normalize_dataset_name(name):
+    name = str(name).strip()
+    if not name:
+        raise ValueError("Dataset name must not be empty")
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', name).lower()
+
+
+def resolve_output_root(output_path, dataset_name):
+    if output_path:
+        return os.path.abspath(output_path)
+    return os.path.join(PROJECT_ROOT, 'data_process', 'GeomDatasets', f'{normalize_dataset_name(dataset_name)}_parsed')
 
 
 def process_with_timeout(func, arg, timeout=2):
@@ -393,7 +407,7 @@ def count_fef_adj(face_edge):
     return fef_adj
 
 
-def process(step_folder, print_error=False, option='deepcad'):
+def process(step_folder, print_error=False, option='deepcad', output_root=None):
     """
     Helper function to load step files and process in parallel
 
@@ -427,7 +441,7 @@ def process(step_folder, print_error=False, option='deepcad'):
         # Save the parsed result
         parent_dir = os.path.basename(os.path.dirname(step_path))
         grandparent_dir = os.path.basename(os.path.dirname(os.path.dirname(step_path)))
-        if option == 'furniture':
+        if option.lower() == 'furniture':
             data_uid = parent_dir + '_' + os.path.basename(step_path)
             sub_folder = grandparent_dir or parent_dir
         else:
@@ -438,7 +452,7 @@ def process(step_folder, print_error=False, option='deepcad'):
             data_uid = data_uid[:-5]  # furniture avoid .step
 
         data['uid'] = data_uid
-        save_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), OUTPUT, sub_folder)
+        save_folder = os.path.join(output_root, sub_folder)
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
 
@@ -642,23 +656,24 @@ def main():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True, help="Root directory containing STEP files")
-    parser.add_argument("--option", type=str, choices=['abc', 'deepcad', 'furniture', 'custom'], default='custom',
-                        help="Dataset preset used for output naming")
+    parser.add_argument("--option", type=str, default='custom',
+                        help="Dataset source name used for naming outputs, e.g. abc, fusion360")
     parser.add_argument("--output", type=str, default=None,
-                        help="Relative output directory under data_process, e.g. GeomDatasets/custom_parsed")
+                        help="Output directory for processed PKL files; supports relative or absolute paths")
     parser.add_argument("--timeout", type=int, default=2, help="Per-file timeout in seconds")
     parser.add_argument("--workers", type=int, default=os.cpu_count(), help="Number of worker processes")
     return parser.parse_args()
 
 
 def preprocess_dataset(args):
-    global OUTPUT
-    OUTPUT = args.output or os.path.join('GeomDatasets', f'{args.option}_parsed')
+    dataset_name = normalize_dataset_name(args.option)
+    output_root = resolve_output_root(args.output, dataset_name)
 
     step_dirs = load_steps(args.input)
     print(f'Found {len(step_dirs)} STEP files under {args.input}')
+    print(f'Saving processed data to {output_root}')
 
-    process_with_option = partial(process, option=args.option)
+    process_with_option = partial(process, option=dataset_name, output_root=output_root)
     process_with_timeout_option = partial(process_with_timeout, process_with_option, timeout=args.timeout)
 
     with ProcessPoolExecutor(max_workers=args.workers) as executor:

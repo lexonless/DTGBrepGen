@@ -1,16 +1,30 @@
 import argparse
 import os.path
+import re
 import yaml
 import wandb
 from geometry.datasets import FaceBboxData, FaceGeomData, VertGeomData, EdgeGeomData
 from geometry.trainers import FaceBboxTrainer, FaceGeomTrainer, VertGeomTrainer, EdgeGeomTrainer
 
 
+def normalize_dataset_name(name):
+    name = str(name).strip()
+    if not name:
+        raise ValueError("Dataset name must not be empty")
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', name).lower()
+
+
 def get_args_geom():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--name', type=str, default='furniture',
-                        choices=['furniture', 'deepcad', 'abc', 'custom'])
+                        help='Dataset name, e.g. furniture, abc, fusion360')
+    parser.add_argument('--config_name', type=str, default=None,
+                        help='Config section name in config.yaml; defaults to --name and falls back to custom')
+    parser.add_argument('--data_root', type=str, default=None,
+                        help='Path to parsed geometry PKL root')
+    parser.add_argument('--train_list', type=str, default=None,
+                        help='Path to split file like xxx_data_split_6bit.pkl')
     parser.add_argument('--face_vae', type=str, default='checkpoints/furniture/vae_face/epoch_400.pt',
                         help='Path to pretrained surface vae weights')
     parser.add_argument('--edge_vae', type=str, default='checkpoints/furniture/vae_edge/epoch_400.pt',
@@ -27,9 +41,11 @@ def get_args_geom():
     parser.add_argument('--dir_name', type=str, default="checkpoints", help='name of the log folder.')
 
     args = parser.parse_args()
-    args.data = os.path.join('data_process/GeomDatasets', args.name+'_parsed')
-    args.train_list = os.path.join('data_process', args.name+'_data_split_6bit.pkl')
-    args.env = args.name+'_geom_'+args.option
+    dataset_name = normalize_dataset_name(args.name)
+    args.config_name = args.config_name or dataset_name
+    args.data = args.data_root or os.path.join('data_process/GeomDatasets', dataset_name + '_parsed')
+    args.train_list = args.train_list or os.path.join('data_process', dataset_name + '_data_split_6bit.pkl')
+    args.env = dataset_name + '_geom_' + args.option
     args.save_dir = os.path.join(args.dir_name, args.env.split('_', 1)[0], args.env.split('_', 1)[1])
 
     return args
@@ -40,7 +56,8 @@ def main():
     # Parse input augments
     args = get_args_geom()
     with open('config.yaml', 'r') as file:
-        config = yaml.safe_load(file).get(args.name, {})
+        all_configs = yaml.safe_load(file)
+    config = all_configs.get(args.config_name, all_configs.get('custom', {}))
     for key, value in config.items():
         if not hasattr(args, key):
             setattr(args, key, value)

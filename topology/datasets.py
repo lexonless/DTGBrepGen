@@ -1,11 +1,19 @@
 import os
 import pickle
 import copy
+import re
 import torch
 import numpy as np
 from tqdm import tqdm
 from utils import check_step_ok, pad_zero, load_data_with_prefix, calculate_y
 from itertools import chain
+
+
+def normalize_dataset_name(name):
+    name = str(name).strip()
+    if not name:
+        raise ValueError("Dataset name must not be empty")
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', name).lower()
 
 
 # furniture class labels
@@ -128,25 +136,32 @@ def compute_topoSeq(faceEdge_adj, edgeVert_adj):
     return topo_seq
 
 
-def create_topo_datasets(data_type='train', option='deepcad'):
+def create_topo_datasets(data_type='train', option='deepcad', geom_root=None, split_path=None, topo_root=None,
+                         max_face=None, max_edge=None):
+
+    dataset_name = normalize_dataset_name(option)
+    geom_dataset_root = geom_root or os.path.join('data_process', 'GeomDatasets', f'{dataset_name}_parsed')
+    topo_dataset_root = topo_root or os.path.join('data_process', 'TopoDatasets', dataset_name)
+    split_file = split_path or os.path.join('data_process', f'{dataset_name}_data_split_6bit.pkl')
+
+    default_limits = {
+        'furniture': (32, 30),
+        'deepcad': (30, 20),
+        'abc': (50, 30),
+    }
+    max_face_limit, max_edge_limit = default_limits.get(dataset_name, default_limits['deepcad'])
+    if max_face is not None:
+        max_face_limit = max_face
+    if max_edge is not None:
+        max_edge_limit = max_edge
 
     def create(path):
-        dataset_specs = {
-            'furniture': ('data_process/GeomDatasets/furniture_parsed', 32, 30),
-            'deepcad': ('data_process/GeomDatasets/deepcad_parsed', 30, 20),
-            'abc': ('data_process/GeomDatasets/abc_parsed', 50, 30),
-            'custom': ('data_process/GeomDatasets/custom_parsed', 30, 20),
-        }
-        if option not in dataset_specs:
-            raise ValueError(f'Unsupported dataset option: {option}')
-
-        geom_root, max_face, max_edge = dataset_specs[option]
-        with open(os.path.join(geom_root, path), 'rb') as f:
+        with open(os.path.join(geom_dataset_root, path), 'rb') as f:
             datas = pickle.load(f)
-            if not check_step_ok(datas, max_face=max_face, max_edge=max_edge):
+            if not check_step_ok(datas, max_face=max_face_limit, max_edge=max_edge_limit):
                 return 0
 
-        if option == 'furniture':
+        if dataset_name == 'furniture':
             data = {'name': path.replace('/', '_').replace('.pkl', '')}
         else:
             data = {'name': os.path.splitext(os.path.basename(path))[0]}
@@ -166,8 +181,8 @@ def create_topo_datasets(data_type='train', option='deepcad'):
         if 'pc' in datas:
             data['pc'] = datas['pc']
 
-        save_dir = os.path.join('data_process/TopoDatasets', option, data_type)
-        if option != 'furniture':
+        save_dir = os.path.join(topo_dataset_root, data_type)
+        if dataset_name != 'furniture':
             relative_dir = os.path.dirname(path)
             if relative_dir:
                 save_dir = os.path.join(save_dir, relative_dir)
@@ -177,7 +192,7 @@ def create_topo_datasets(data_type='train', option='deepcad'):
 
         return 1
 
-    with open(os.path.join('data_process', option+'_data_split_6bit.pkl'), 'rb') as tf:
+    with open(split_file, 'rb') as tf:
         if data_type == 'train':
             files = pickle.load(tf)['train']
         else:

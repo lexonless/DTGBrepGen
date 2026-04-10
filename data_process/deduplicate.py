@@ -4,9 +4,26 @@ import json
 import math
 import pickle
 import argparse
+import re
 from tqdm import tqdm
 from hashlib import sha256
 import numpy as np
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def normalize_dataset_name(name):
+    name = str(name).strip()
+    if not name:
+        raise ValueError("Dataset name must not be empty")
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', name).lower()
+
+
+def resolve_output_path(path, default_path):
+    if path:
+        return os.path.abspath(path)
+    return default_path
 
 
 def create_parser():
@@ -15,7 +32,9 @@ def create_parser():
     parser.add_argument("--data", type=str, default='data_process/GeomDatasets/deepcad_parsed', help="Data folder path or CAD .pkl file")
     parser.add_argument("--bit", type=int, default=6, help='Deduplicate precision')
     parser.add_argument("--option", type=str, default='deepcad',
-                        help="Dataset name used in the saved split filename, e.g. deepcad/custom")
+                        help="Dataset name used in output filenames, e.g. abc/fusion360")
+    parser.add_argument("--save_path", type=str, default=None,
+                        help="Where to save the resulting pickle; supports relative or absolute paths")
     return parser
 
 
@@ -107,6 +126,9 @@ def hash_face_points(faces_wcs, n_bits):
 
 def save_unique_data(save_path, unique_data):
     """Save unique data to a pickle file."""
+    save_dir = os.path.dirname(save_path)
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
     with open(save_path, "wb") as tf:
         pickle.dump(unique_data, tf)
 
@@ -152,7 +174,9 @@ def main():
             'val': val_path,
             'test': test_path,
         }
-        save_unique_data(f'data_process/{cad_args.option}_data_split_{cad_args.bit}bit.pkl', data_path)
+        dataset_name = normalize_dataset_name(cad_args.option)
+        default_save = os.path.join(PROJECT_ROOT, 'data_process', f'{dataset_name}_data_split_{cad_args.bit}bit.pkl')
+        save_unique_data(resolve_output_path(cad_args.save_path, default_save), data_path)
 
     elif args.name == 'facEdge':
         facEdge_args = args_deduplicate_facEdge(unknown)
@@ -188,7 +212,9 @@ def main():
             if path_idx % 2000 == 0:
                 print(len(unique_hash) / total)
 
-        save_unique_data(facEdge_args.list.split('.')[0] + f'_{facEdge_args.type}.pkl', unique_data)
+        list_root, list_ext = os.path.splitext(facEdge_args.list)
+        default_save = os.path.abspath(list_root + f'_{facEdge_args.type}{list_ext}')
+        save_unique_data(resolve_output_path(facEdge_args.save_path, default_save), unique_data)
 
 
 if __name__ == "__main__":
