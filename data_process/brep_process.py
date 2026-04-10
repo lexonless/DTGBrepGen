@@ -407,7 +407,7 @@ def count_fef_adj(face_edge):
     return fef_adj
 
 
-def process(step_folder, print_error=False, option='deepcad', output_root=None):
+def process(step_folder, print_error=False, option='deepcad', output_root=None, split_multi_solid=False):
     """
     Helper function to load step files and process in parallel
 
@@ -423,64 +423,102 @@ def process(step_folder, print_error=False, option='deepcad', output_root=None):
         assert step_folder.endswith('.step')
         step_path = step_folder
 
-        # Check single solid
-        cad_solid = load_step(step_path)
-
-        if len(cad_solid) != 1:
-            if print_error:
-                print('Skipping multi solids...')
-            return 0
-
-        # Start data parsing
-        data = parse_solid(cad_solid[0])
-        if data is None:
-            if print_error:
-                print('Exceeding threshold...')
-            return 0  # number of faces or edges exceed pre-determined threshold
-
-        # Save the parsed result
         parent_dir = os.path.basename(os.path.dirname(step_path))
         grandparent_dir = os.path.basename(os.path.dirname(os.path.dirname(step_path)))
         if option.lower() == 'furniture':
-            data_uid = parent_dir + '_' + os.path.basename(step_path)
             sub_folder = grandparent_dir or parent_dir
         else:
-            data_uid = os.path.basename(step_path)
             sub_folder = parent_dir or 'default'
-
-        if data_uid.endswith('.step'):
-            data_uid = data_uid[:-5]  # furniture avoid .step
-
-        data['uid'] = data_uid
         save_folder = os.path.join(output_root, sub_folder)
         if not os.path.exists(save_folder):
             os.makedirs(save_folder)
 
-        fef_adj = count_fef_adj(data['faceEdge_adj'])
-        data['fef_adj'] = fef_adj
-
-        nv = data['vert_wcs'].shape[0]
-        vertex_edge_dict = {i: [] for i in range(nv)}
-        for edge_id, (v1, v2) in enumerate(data['edgeVert_adj']):
-            vertex_edge_dict[v1].append(edge_id)
-            vertex_edge_dict[v2].append(edge_id)
-
-        vertex_edge = [vertex_edge_dict[i] for i in range(nv)]  # list[[edge_1, edge_2,...],...]
-        # list[[face_1, face_2,...], ...]
-        vertexFace = [np.unique(data['edgeFace_adj'][i].reshape(-1)).tolist() for i in vertex_edge]
-        data['vertFace_adj'] = vertexFace
-
-        data = bspline_fitting_local(data)
-
-        save_path = os.path.join(save_folder, data['uid'] + '.pkl')
-        with open(save_path, "wb") as tf:
-            pickle.dump(data, tf)
-
-        return 1
+        # Check single solid
+        cad_solid = load_step(step_path)
+        return process_loaded_solids(
+            cad_solid,
+            step_path=step_path,
+            option=option,
+            save_folder=save_folder,
+            parent_dir=parent_dir,
+            grandparent_dir=grandparent_dir,
+            print_error=print_error,
+            split_multi_solid=split_multi_solid,
+        )
 
     except Exception as e:
         print('not saving due to error...')
         return 0
+
+
+def build_data_uid(step_path, option, parent_dir, grandparent_dir, solid_idx=None):
+    if option.lower() == 'furniture':
+        data_uid = parent_dir + '_' + os.path.basename(step_path)
+    else:
+        data_uid = os.path.basename(step_path)
+
+    if data_uid.endswith('.step'):
+        data_uid = data_uid[:-5]
+
+    if solid_idx is not None:
+        data_uid = f'{data_uid}_solid_{solid_idx:03d}'
+
+    return data_uid
+
+
+def enrich_and_save_data(data, data_uid, save_folder):
+    data['uid'] = data_uid
+
+    fef_adj = count_fef_adj(data['faceEdge_adj'])
+    data['fef_adj'] = fef_adj
+
+    nv = data['vert_wcs'].shape[0]
+    vertex_edge_dict = {i: [] for i in range(nv)}
+    for edge_id, (v1, v2) in enumerate(data['edgeVert_adj']):
+        vertex_edge_dict[v1].append(edge_id)
+        vertex_edge_dict[v2].append(edge_id)
+
+    vertex_edge = [vertex_edge_dict[i] for i in range(nv)]  # list[[edge_1, edge_2,...],...]
+    vertexFace = [np.unique(data['edgeFace_adj'][i].reshape(-1)).tolist() for i in vertex_edge]
+    data['vertFace_adj'] = vertexFace
+
+    data = bspline_fitting_local(data)
+
+    save_path = os.path.join(save_folder, data['uid'] + '.pkl')
+    with open(save_path, "wb") as tf:
+        pickle.dump(data, tf)
+
+
+def process_loaded_solids(cad_solid, step_path, option, save_folder, parent_dir, grandparent_dir, print_error=False,
+                          split_multi_solid=False):
+    num_shapes = len(cad_solid)
+
+    if num_shapes != 1 and not split_multi_solid:
+        if print_error:
+            print('Skipping multi solids...')
+        return 0
+
+    success = 0
+    solids_to_process = cad_solid if split_multi_solid else cad_solid[:1]
+
+    for solid_idx, solid in enumerate(solids_to_process):
+        data = parse_solid(solid)
+        if data is None:
+            if print_error:
+                print('Exceeding threshold...')
+            continue
+
+        current_uid = build_data_uid(
+            step_path=step_path,
+            option=option,
+            parent_dir=parent_dir,
+            grandparent_dir=grandparent_dir,
+            solid_idx=solid_idx if split_multi_solid else None,
+        )
+        enrich_and_save_data(data, current_uid, save_folder)
+        success += 1
+
+    return success
 
 
 def bspline_fitting_local(data):
@@ -660,6 +698,8 @@ def parse_args():
                         help="Dataset source name used for naming outputs, e.g. abc, fusion360")
     parser.add_argument("--output", type=str, default=None,
                         help="Output directory for processed PKL files; supports relative or absolute paths")
+    parser.add_argument("--split_multi_solid", action="store_true",
+                        help="Split STEP files containing multiple solids and save each solid separately")
     parser.add_argument("--timeout", type=int, default=2, help="Per-file timeout in seconds")
     parser.add_argument("--workers", type=int, default=os.cpu_count(), help="Number of worker processes")
     return parser.parse_args()
@@ -673,13 +713,22 @@ def preprocess_dataset(args):
     print(f'Found {len(step_dirs)} STEP files under {args.input}')
     print(f'Saving processed data to {output_root}')
 
-    process_with_option = partial(process, option=dataset_name, output_root=output_root)
+    process_with_option = partial(
+        process,
+        option=dataset_name,
+        output_root=output_root,
+        split_multi_solid=args.split_multi_solid,
+    )
     process_with_timeout_option = partial(process_with_timeout, process_with_option, timeout=args.timeout)
 
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         results = list(tqdm(executor.map(process_with_timeout_option, step_dirs), total=len(step_dirs)))
 
-    print(f'Processed {sum(results)} / {len(step_dirs)} STEP files successfully')
+    total_saved = sum(results)
+    if args.split_multi_solid:
+        print(f'Saved {total_saved} solids from {len(step_dirs)} STEP files')
+    else:
+        print(f'Processed {total_saved} / {len(step_dirs)} STEP files successfully')
 
 
 if __name__ == '__main__':

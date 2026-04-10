@@ -10,6 +10,15 @@ python -m data_process.brep_process \
   --option Fusion360
 ```
 
+If one STEP file may contain multiple solids and you want to save them separately:
+
+```bash
+python -m data_process.brep_process \
+  --input /path/to/step_root \
+  --option Fusion360 \
+  --split_multi_solid
+```
+
 This writes processed `.pkl` files to:
 
 ```bash
