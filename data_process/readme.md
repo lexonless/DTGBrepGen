@@ -144,3 +144,4 @@ python -m topology.train_topo \
 - `--option` is now just the dataset source name. It can be `ABC`, `Fusion360`, `MyDataset`, etc.
 - The code normalizes that name internally, so `ABC` becomes `abc`, `Fusion360` becomes `fusion360`.
 - If `config.yaml` does not contain a matching config section, training falls back to the `custom` config.
+- `brep_process.py` now prints a summary of failure reasons such as `multi_solid_skipped_files`, `parse_filtered`, `bspline_failed`, and `save_exception`.

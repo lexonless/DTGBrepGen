@@ -2,6 +2,7 @@ import os
 import pickle
 import argparse
 import re
+from collections import Counter
 from tqdm import tqdm
 from multiprocessing.pool import Pool
 from occwl.io import load_step
@@ -39,6 +40,13 @@ def resolve_output_root(output_path, dataset_name):
     if output_path:
         return os.path.abspath(output_path)
     return os.path.join(PROJECT_ROOT, 'data_process', 'GeomDatasets', f'{normalize_dataset_name(dataset_name)}_parsed')
+
+
+def merge_counters(counters):
+    merged = Counter()
+    for counter in counters:
+        merged.update(counter)
+    return merged
 
 
 def process_with_timeout(func, arg, timeout=2):
@@ -448,7 +456,10 @@ def process(step_folder, print_error=False, option='deepcad', output_root=None, 
 
     except Exception as e:
         print('not saving due to error...')
-        return 0
+        stats = Counter()
+        stats['step_files_seen'] += 1
+        stats['step_level_exception'] += 1
+        return stats
 
 
 def build_data_uid(step_path, option, parent_dir, grandparent_dir, solid_idx=None):
@@ -483,29 +494,43 @@ def enrich_and_save_data(data, data_uid, save_folder):
     data['vertFace_adj'] = vertexFace
 
     data = bspline_fitting_local(data)
+    if data.get('face_ctrs') is None or data.get('edge_ctrs') is None:
+        return False, 'bspline_failed'
 
     save_path = os.path.join(save_folder, data['uid'] + '.pkl')
     with open(save_path, "wb") as tf:
         pickle.dump(data, tf)
+    return True, 'saved'
 
 
 def process_loaded_solids(cad_solid, step_path, option, save_folder, parent_dir, grandparent_dir, print_error=False,
                           split_multi_solid=False):
     num_shapes = len(cad_solid)
+    stats = Counter()
+    stats['step_files_seen'] += 1
+    stats['shapes_detected'] += num_shapes
 
     if num_shapes != 1 and not split_multi_solid:
         if print_error:
             print('Skipping multi solids...')
-        return 0
+        stats['multi_solid_skipped_files'] += 1
+        return stats
 
-    success = 0
     solids_to_process = cad_solid if split_multi_solid else cad_solid[:1]
+    if split_multi_solid and num_shapes > 1:
+        stats['multi_solid_files_split'] += 1
 
     for solid_idx, solid in enumerate(solids_to_process):
-        data = parse_solid(solid)
+        stats['solids_seen'] += 1
+        try:
+            data = parse_solid(solid)
+        except Exception:
+            stats['parse_exception'] += 1
+            continue
         if data is None:
             if print_error:
                 print('Exceeding threshold...')
+            stats['parse_filtered'] += 1
             continue
 
         current_uid = build_data_uid(
@@ -515,10 +540,17 @@ def process_loaded_solids(cad_solid, step_path, option, save_folder, parent_dir,
             grandparent_dir=grandparent_dir,
             solid_idx=solid_idx if split_multi_solid else None,
         )
-        enrich_and_save_data(data, current_uid, save_folder)
-        success += 1
+        try:
+            saved, reason = enrich_and_save_data(data, current_uid, save_folder)
+        except Exception:
+            stats['save_exception'] += 1
+            continue
 
-    return success
+        stats[reason] += 1
+        if saved:
+            stats['solids_saved'] += 1
+
+    return stats
 
 
 def bspline_fitting_local(data):
@@ -724,11 +756,16 @@ def preprocess_dataset(args):
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         results = list(tqdm(executor.map(process_with_timeout_option, step_dirs), total=len(step_dirs)))
 
-    total_saved = sum(results)
+    total_stats = merge_counters(results)
+    total_saved = total_stats.get('solids_saved', 0)
     if args.split_multi_solid:
         print(f'Saved {total_saved} solids from {len(step_dirs)} STEP files')
     else:
         print(f'Processed {total_saved} / {len(step_dirs)} STEP files successfully')
+
+    print('Summary:')
+    for key in sorted(total_stats.keys()):
+        print(f'  {key}: {total_stats[key]}')
 
 
 if __name__ == '__main__':
