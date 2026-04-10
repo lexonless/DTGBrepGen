@@ -131,86 +131,49 @@ def compute_topoSeq(faceEdge_adj, edgeVert_adj):
 def create_topo_datasets(data_type='train', option='deepcad'):
 
     def create(path):
+        dataset_specs = {
+            'furniture': ('data_process/GeomDatasets/furniture_parsed', 32, 30),
+            'deepcad': ('data_process/GeomDatasets/deepcad_parsed', 30, 20),
+            'abc': ('data_process/GeomDatasets/abc_parsed', 50, 30),
+            'custom': ('data_process/GeomDatasets/custom_parsed', 30, 20),
+        }
+        if option not in dataset_specs:
+            raise ValueError(f'Unsupported dataset option: {option}')
 
-        if option == 'furniture':
-            with open(os.path.join('data_process/GeomDatasets/furniture_parsed', path), 'rb') as f:
-                datas = pickle.load(f)
-
-                if not check_step_ok(datas, max_face=32):
-                    return 0
-        elif option == 'deepcad':
-            with open(os.path.join('data_process/GeomDatasets/deepcad_parsed', path), 'rb') as f:
-                datas = pickle.load(f)
-
-                if not check_step_ok(datas, max_face=30, max_edge=20):
-                    return 0
-        else:
-            assert option == 'abc'
-            with open(os.path.join('data_process/GeomDatasets/abc_parsed', path), 'rb') as f:
-                datas = pickle.load(f)
-
-                if not check_step_ok(datas, max_face=50, max_edge=30):
-                    return 0
+        geom_root, max_face, max_edge = dataset_specs[option]
+        with open(os.path.join(geom_root, path), 'rb') as f:
+            datas = pickle.load(f)
+            if not check_step_ok(datas, max_face=max_face, max_edge=max_edge):
+                return 0
 
         if option == 'furniture':
             data = {'name': path.replace('/', '_').replace('.pkl', '')}
+        else:
+            data = {'name': os.path.splitext(os.path.basename(path))[0]}
 
-            faceEdge_adj, edgeFace_adj, edgeVert_adj, fef_adj = assign_idx(datas['faceEdge_adj'],
-                                                                           datas['edgeFace_adj'],
-                                                                           datas['edgeVert_adj'],
-                                                                           datas['fef_adj'])
+        faceEdge_adj, edgeFace_adj, edgeVert_adj, fef_adj = assign_idx(datas['faceEdge_adj'],
+                                                                       datas['edgeFace_adj'],
+                                                                       datas['edgeVert_adj'],
+                                                                       datas['fef_adj'])
 
-            topo_seq = compute_topoSeq(faceEdge_adj, edgeVert_adj)
+        topo_seq = compute_topoSeq(faceEdge_adj, edgeVert_adj)
 
-            data['topo_seq'] = topo_seq
-            data['faceEdge_adj'] = faceEdge_adj
-            data['edgeFace_adj'] = edgeFace_adj
-            data['edgeVert_adj'] = edgeVert_adj
-            data['fef_adj'] = fef_adj
-
-            os.makedirs(os.path.join('data_process/TopoDatasets/furniture', data_type), exist_ok=True)
-            with open(os.path.join('data_process/TopoDatasets/furniture', data_type, data['name'] + '.pkl'), 'wb') as f:
-                pickle.dump(data, f)
-        elif option == 'deepcad':
-            data = {'name': path.split('/')[-1].replace('.pkl', '')}
-
-            faceEdge_adj, edgeFace_adj, edgeVert_adj, fef_adj = assign_idx(datas['faceEdge_adj'],
-                                                                           datas['edgeFace_adj'],
-                                                                           datas['edgeVert_adj'],
-                                                                           datas['fef_adj'])
-
-            topo_seq = compute_topoSeq(faceEdge_adj, edgeVert_adj)
-
-            data['topo_seq'] = topo_seq
-            data['faceEdge_adj'] = faceEdge_adj
-            data['edgeFace_adj'] = edgeFace_adj
-            data['edgeVert_adj'] = edgeVert_adj
-            data['fef_adj'] = fef_adj
+        data['topo_seq'] = topo_seq
+        data['faceEdge_adj'] = faceEdge_adj
+        data['edgeFace_adj'] = edgeFace_adj
+        data['edgeVert_adj'] = edgeVert_adj
+        data['fef_adj'] = fef_adj
+        if 'pc' in datas:
             data['pc'] = datas['pc']
 
-            os.makedirs(os.path.join('data_process/TopoDatasets/deepcad', data_type, path.split('/')[-2]), exist_ok=True)
-            with open(os.path.join('data_process/TopoDatasets/deepcad', data_type,  path.split('/')[-2], data['name']+'.pkl'), 'wb') as f:
-                pickle.dump(data, f)
-        else:
-            assert option == 'abc'
-            data = {'name': path.split('/')[-1].replace('.pkl', '')}
-
-            faceEdge_adj, edgeFace_adj, edgeVert_adj, fef_adj = assign_idx(datas['faceEdge_adj'],
-                                                                           datas['edgeFace_adj'],
-                                                                           datas['edgeVert_adj'],
-                                                                           datas['fef_adj'])
-
-            topo_seq = compute_topoSeq(faceEdge_adj, edgeVert_adj)
-
-            data['topo_seq'] = topo_seq
-            data['faceEdge_adj'] = faceEdge_adj
-            data['edgeFace_adj'] = edgeFace_adj
-            data['edgeVert_adj'] = edgeVert_adj
-            data['fef_adj'] = fef_adj
-
-            os.makedirs(os.path.join('data_process/TopoDatasets/abc', data_type, path.split('/')[-2]), exist_ok=True)
-            with open(os.path.join('data_process/TopoDatasets/abc', data_type,  path.split('/')[-2], data['name']+'.pkl'), 'wb') as f:
-                pickle.dump(data, f)
+        save_dir = os.path.join('data_process/TopoDatasets', option, data_type)
+        if option != 'furniture':
+            relative_dir = os.path.dirname(path)
+            if relative_dir:
+                save_dir = os.path.join(save_dir, relative_dir)
+        os.makedirs(save_dir, exist_ok=True)
+        with open(os.path.join(save_dir, data['name'] + '.pkl'), 'wb') as f:
+            pickle.dump(data, f)
 
         return 1
 

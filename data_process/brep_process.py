@@ -24,6 +24,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 # To speed up processing, define maximum threshold
 MAX_FACE = 70
+OUTPUT = os.path.join('GeomDatasets', 'custom_parsed')
 
 
 def process_with_timeout(func, arg, timeout=2):
@@ -424,16 +425,14 @@ def process(step_folder, print_error=False, option='deepcad'):
             return 0  # number of faces or edges exceed pre-determined threshold
 
         # Save the parsed result
+        parent_dir = os.path.basename(os.path.dirname(step_path))
+        grandparent_dir = os.path.basename(os.path.dirname(os.path.dirname(step_path)))
         if option == 'furniture':
-            data_uid = step_path.split('/')[-2] + '_' + step_path.split('/')[-1]
-            sub_folder = step_path.split('/')[-3]
-        elif option == 'deepcad':
-            data_uid = os.path.basename(step_path)
-            sub_folder = step_path.split('/')[-2]
+            data_uid = parent_dir + '_' + os.path.basename(step_path)
+            sub_folder = grandparent_dir or parent_dir
         else:
-            assert option == 'abc'
             data_uid = os.path.basename(step_path)
-            sub_folder = step_path.split('/')[-2]
+            sub_folder = parent_dir or 'default'
 
         if data_uid.endswith('.step'):
             data_uid = data_uid[:-5]  # furniture avoid .step
@@ -640,33 +639,33 @@ def main():
             pickle.dump(data, f)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", type=str, required=True, help="Root directory containing STEP files")
+    parser.add_argument("--option", type=str, choices=['abc', 'deepcad', 'furniture', 'custom'], default='custom',
+                        help="Dataset preset used for output naming")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Relative output directory under data_process, e.g. GeomDatasets/custom_parsed")
+    parser.add_argument("--timeout", type=int, default=2, help="Per-file timeout in seconds")
+    parser.add_argument("--workers", type=int, default=os.cpu_count(), help="Number of worker processes")
+    return parser.parse_args()
+
+
+def preprocess_dataset(args):
+    global OUTPUT
+    OUTPUT = args.output or os.path.join('GeomDatasets', f'{args.option}_parsed')
+
+    step_dirs = load_steps(args.input)
+    print(f'Found {len(step_dirs)} STEP files under {args.input}')
+
+    process_with_option = partial(process, option=args.option)
+    process_with_timeout_option = partial(process_with_timeout, process_with_option, timeout=args.timeout)
+
+    with ProcessPoolExecutor(max_workers=args.workers) as executor:
+        results = list(tqdm(executor.map(process_with_timeout_option, step_dirs), total=len(step_dirs)))
+
+    print(f'Processed {sum(results)} / {len(step_dirs)} STEP files successfully')
+
+
 if __name__ == '__main__':
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--input", type=str, default='/home/jing/Datasets/DeepCAD', help="Data folder path")
-    # parser.add_argument("--option", type=str, choices=['abc', 'deepcad', 'furniture'], default='deepcad',
-    #                     help="Choose between dataset option [abc/deepcad/furniture]")
-    # parser.add_argument("--interval", type=int, help="Data range index, only required for abc/deepcad")
-    # args = parser.parse_args()
-    #
-    # if args.option == 'deepcad':
-    #     OUTPUT = 'GeomDatasets/deepcad_parsed'
-    # elif args.option == 'abc':
-    #     OUTPUT = 'GeomDatasets/abc_parsed'
-    # else:
-    #     OUTPUT = 'GeomDatasets/furniture_parsed'
-    #
-    # step_dirs = load_steps(args.input)
-    # # for i in range(1, 10):
-    # #     process(step_dirs[i])
-    #
-    # process_with_option = partial(process, option=args.option)
-    # process_with_timeout_option = partial(process_with_timeout, process_with_option)
-    #
-    # with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-    #     results = list(executor.map(process_with_timeout_option, step_dirs))
-
-    # main()
-
-    sample_pc()
-
-    # count_bspline_degree()
+    preprocess_dataset(parse_args())

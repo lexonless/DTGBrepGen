@@ -14,8 +14,8 @@ def create_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default='data_process/GeomDatasets/deepcad_parsed', help="Data folder path or CAD .pkl file")
     parser.add_argument("--bit", type=int, default=6, help='Deduplicate precision')
-    parser.add_argument("--option", type=str, choices=['abc', 'deepcad', 'furniture'], default='deepcad',
-                        help="Choose between dataset options: [abc/deepcad/furniture]")
+    parser.add_argument("--option", type=str, default='deepcad',
+                        help="Dataset name used in the saved split filename, e.g. deepcad/custom")
     return parser
 
 
@@ -58,9 +58,9 @@ def load_pkl(root_dir):
     val_uid = full_uids[int(len(full_uids) * 0.9):int(len(full_uids) * 0.95)]
     test_uid = full_uids[int(len(full_uids) * 0.95):]
 
-    train_uid = ['/'.join(uid.split('/')[-2:]) for uid in train_uid]
-    val_uid = ['/'.join(uid.split('/')[-2:]) for uid in val_uid]
-    test_uid = ['/'.join(uid.split('/')[-2:]) for uid in test_uid]
+    train_uid = [os.path.relpath(uid, root_dir).replace('\\', '/') for uid in train_uid]
+    val_uid = [os.path.relpath(uid, root_dir).replace('\\', '/') for uid in val_uid]
+    test_uid = [os.path.relpath(uid, root_dir).replace('\\', '/') for uid in test_uid]
 
     return train_uid, val_uid, test_uid
 
@@ -78,6 +78,21 @@ def load_pkl_data(path):
     with open(path, "rb") as file:
         data = pickle.load(file)
     return data
+
+
+def resolve_uid_path(root_dir, uid):
+    direct_path = os.path.join(root_dir, uid)
+    if os.path.exists(direct_path):
+        return direct_path
+
+    filename = os.path.basename(uid)
+    stem, _ = os.path.splitext(filename)
+    if stem.isdigit():
+        deepcad_style = os.path.join(root_dir, str(math.floor(int(stem) / 10000)).zfill(4), filename)
+        if os.path.exists(deepcad_style):
+            return deepcad_style
+
+    raise FileNotFoundError(f"Cannot resolve UID '{uid}' under '{root_dir}'")
 
 
 def hash_face_points(faces_wcs, n_bits):
@@ -116,7 +131,7 @@ def main():
 
         for path_idx, uid in tqdm(enumerate(train)):
             total += 1
-            path = os.path.join(cad_args.data, uid)
+            path = resolve_uid_path(cad_args.data, uid)
             data = load_pkl_data(path)
 
             # Hash the face sampled points
@@ -150,10 +165,7 @@ def main():
         total = 0
 
         for path_idx, uid in tqdm(enumerate(data_list)):
-            if facEdge_args.option == 'furniture':
-                path = os.path.join(facEdge_args.data, uid)
-            else:
-                path = os.path.join(facEdge_args.data, str(math.floor(int(uid.split('.')[0]) / 10000)).zfill(4), uid)
+            path = resolve_uid_path(facEdge_args.data, uid)
             data = load_pkl_data(path)
             face_ncs, edge_ncs = data['face_ncs'], data['edge_ncs']
             data = edge_ncs if facEdge_args.type == 'edge' else face_ncs

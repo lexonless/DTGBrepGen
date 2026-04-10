@@ -9,7 +9,7 @@ from topology.trainers import EdgeVertTrainer, FaceEdgeTrainer
 def get_args_topo():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str, default='furniture',
-                        choices=['furniture', 'deepcad', 'abc'])
+                        choices=['furniture', 'deepcad', 'abc', 'custom'])
     parser.add_argument('--batch_size', type=int, default=16, help='input batch size')
     parser.add_argument("--option", type=str, choices=['faceEdge', 'edgeVert'], default='edgeVert')
     parser.add_argument('--train_epochs', type=int, default=2000, help='number of epochs to train for')

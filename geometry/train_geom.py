@@ -10,7 +10,7 @@ def get_args_geom():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--name', type=str, default='furniture',
-                        choices=['furniture', 'deepcad', 'abc'])
+                        choices=['furniture', 'deepcad', 'abc', 'custom'])
     parser.add_argument('--face_vae', type=str, default='checkpoints/furniture/vae_face/epoch_400.pt',
                         help='Path to pretrained surface vae weights')
     parser.add_argument('--edge_vae', type=str, default='checkpoints/furniture/vae_edge/epoch_400.pt',
