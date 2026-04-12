@@ -16,24 +16,34 @@ from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
 from OCC.Core.StlAPI import StlAPI_Writer
 
 
-def check_step_ok(data, max_face=50, max_edge=30, edge_classes=5):
+def check_step_ok(data, max_face=50, max_edge=30, edge_classes=5, return_reason=False):
+    def reject(reason):
+        if return_reason:
+            return False, reason
+        return False
+
+    def accept():
+        if return_reason:
+            return True, 'ok'
+        return True
+
     faceEdge_adj, face_bbox, edge_bbox, fef_adj, vertFace_adj = (data['faceEdge_adj'], data['face_bbox_wcs'],
                                                                  data['edge_bbox_wcs'], data['fef_adj'],
                                                                  data['vertFace_adj'])
 
     # Skip complex faces and complex edges
     if 'edge_ctrs' not in data.keys() or 'face_ctrs' not in data.keys():
-        return False
+        return reject('missing_ctr_fields')
 
     if data['edge_ctrs'] is None or data['face_ctrs'] is None:
-        return False
+        return reject('null_ctr_fields')
 
     if 'pc' in data:
         if data['pc'] is None:
-            return False
+            return reject('null_point_cloud')
 
     if max([len(i) for i in vertFace_adj]) > 15:
-        return False
+        return reject('vertface_degree_exceeded')
 
     # Check Topology
     edgeVert_adj = data['edgeVert_adj']
@@ -44,24 +54,24 @@ def check_step_ok(data, max_face=50, max_edge=30, edge_classes=5):
             vertices.update(edgeVert_adj[edge_id])
         num_vertices = len(vertices)
         if num_edges != num_vertices:
-            return False
+            return reject('face_edge_vertex_mismatch')
 
     sorted_edges = np.sort(edgeVert_adj, axis=1)
     unique_edges = np.unique(sorted_edges, axis=0)
     if unique_edges.shape[0] < edgeVert_adj.shape[0]:
-        return False
+        return reject('duplicate_edges')
 
     # Skip over max edge-classes
     if fef_adj.max() >= edge_classes:
-        return False
+        return reject('edge_classes_exceeded')
 
     # Skip over max size data
     if len(face_bbox) > max_face:
-        return False
+        return reject('max_face_exceeded')
 
     for face_edges in faceEdge_adj:
         if len(face_edges) > max_edge:
-            return False
+            return reject('max_edge_exceeded')
 
     # Skip faces too close to each other
     threshold_value = 0.05
@@ -78,13 +88,13 @@ def check_step_ok(data, max_face=50, max_edge=30, edge_classes=5):
         else:
             non_repeat = np.concatenate([non_repeat, bbox[np.newaxis, :, :]], 0)
     if len(non_repeat) != len(_face_bbox_):
-        return False
+        return reject('duplicate_face_bbox')
 
     # Skip edges too close to each other
     se_bbox = []
     for adj in faceEdge_adj:
         if len(edge_bbox[adj]) == 0:
-            return False
+            return reject('empty_edge_bbox_group')
         se_bbox.append(edge_bbox[adj] * scaled_value)
 
     for bbb in se_bbox:
@@ -98,9 +108,9 @@ def check_step_ok(data, max_face=50, max_edge=30, edge_classes=5):
             else:
                 non_repeat = np.concatenate([non_repeat, bbox[np.newaxis, :, :]], 0)
         if len(non_repeat) != len(_edge_bbox_):
-            return False
+            return reject('duplicate_edge_bbox')
 
-    return True
+    return accept()
 
 
 def normalize_step(steps, skip=False):

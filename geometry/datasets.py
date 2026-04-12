@@ -4,7 +4,7 @@ import math
 import pickle
 import numpy as np
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from tqdm import tqdm
 from multiprocessing.pool import Pool
 from utils import pad_and_stack, pad_zero, sort_bbox_multi, check_step_ok
@@ -97,9 +97,11 @@ def filter_data(data):
     # Load data
     with open(data_path, "rb") as tf:
         data = pickle.load(tf)
-    if not check_step_ok(data, max_face=max_face, max_edge=max_edge, edge_classes=edge_classes):
-        return None, None
-    return data_path, data_class
+    is_ok, reason = check_step_ok(data, max_face=max_face, max_edge=max_edge, edge_classes=edge_classes,
+                                  return_reason=True)
+    if not is_ok:
+        return None, None, reason
+    return data_path, data_class, reason
 
 
 def load_data(input_data, input_list, validate, args):
@@ -125,11 +127,13 @@ def load_data(input_data, input_list, validate, args):
 
     # Filter data in parallel
     loaded_data = []
+    filter_stats = Counter()
     params = zip(data_paths, [args.max_face] * len(data_list), [args.max_edge] * len(data_list),
                  [args.bbox_scaled] * len(data_list), [args.threshold] * len(data_list),
                  [args.edge_classes] * len(data_list), data_classes)
     convert_iter = Pool(os.cpu_count()).imap(filter_data, params)
-    for data_path, data_class in tqdm(convert_iter, total=len(data_list)):
+    for data_path, data_class, reason in tqdm(convert_iter, total=len(data_list)):
+        filter_stats[reason] += 1
         if data_path is not None:
             if data_class < 0:  # abc or deepcad
                 loaded_data.append(data_path)
@@ -137,6 +141,9 @@ def load_data(input_data, input_list, validate, args):
                 loaded_data.append((data_path, data_class))
 
     print(f'Processed {len(loaded_data)}/{len(data_list)}')
+    print('Filter summary:')
+    for reason, count in sorted(filter_stats.items()):
+        print(f'  {reason}: {count}')
     return loaded_data
 
 

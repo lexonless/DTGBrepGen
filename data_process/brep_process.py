@@ -45,7 +45,14 @@ def resolve_output_root(output_path, dataset_name):
 def merge_counters(counters):
     merged = Counter()
     for counter in counters:
-        merged.update(counter)
+        if isinstance(counter, Counter):
+            merged.update(counter)
+        elif isinstance(counter, dict):
+            merged.update(counter)
+        elif isinstance(counter, int):
+            merged['legacy_int_result'] += counter
+        else:
+            merged['unknown_result_type'] += 1
     return merged
 
 
@@ -56,7 +63,10 @@ def process_with_timeout(func, arg, timeout=2):
             result = future.result(timeout=timeout)
             return result
         except concurrent.futures.TimeoutError:
-            return 0
+            stats = Counter()
+            stats['step_files_seen'] += 1
+            stats['timeout'] += 1
+            return stats
 
 
 def load_step_with_timeout(step_path, timeout=2):

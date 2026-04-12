@@ -4,6 +4,7 @@ import copy
 import re
 import torch
 import numpy as np
+from collections import Counter
 from tqdm import tqdm
 from utils import check_step_ok, pad_zero, load_data_with_prefix, calculate_y
 from itertools import chain
@@ -19,6 +20,13 @@ def normalize_dataset_name(name):
 # furniture class labels
 text2int = {'bathtub': 0, 'bed': 1, 'bench': 2, 'bookshelf': 3, 'cabinet': 4, 'chair': 5, 'couch': 6, 'lamp': 7,
             'sofa': 8, 'table': 9}
+
+
+def to_torch_tensor(array_like, dtype=None):
+    array = np.asarray(array_like)
+    if dtype is not None:
+        return torch.tensor(array.tolist(), dtype=dtype)
+    return torch.tensor(array.tolist())
 
 
 def opposite_idx(idx):
@@ -154,11 +162,14 @@ def create_topo_datasets(data_type='train', option='deepcad', geom_root=None, sp
         max_face_limit = max_face
     if max_edge is not None:
         max_edge_limit = max_edge
+    stats = Counter()
 
     def create(path):
         with open(os.path.join(geom_dataset_root, path), 'rb') as f:
             datas = pickle.load(f)
-            if not check_step_ok(datas, max_face=max_face_limit, max_edge=max_edge_limit):
+            is_ok, reason = check_step_ok(datas, max_face=max_face_limit, max_edge=max_edge_limit, return_reason=True)
+            stats[reason] += 1
+            if not is_ok:
                 return 0
 
         if dataset_name == 'furniture':
@@ -172,6 +183,9 @@ def create_topo_datasets(data_type='train', option='deepcad', geom_root=None, sp
                                                                        datas['fef_adj'])
 
         topo_seq = compute_topoSeq(faceEdge_adj, edgeVert_adj)
+        if topo_seq == 0:
+            stats['invalid_topo_seq'] += 1
+            return 0
 
         data['topo_seq'] = topo_seq
         data['faceEdge_adj'] = faceEdge_adj
@@ -204,6 +218,9 @@ def create_topo_datasets(data_type='train', option='deepcad', geom_root=None, sp
         valid += create(file)
 
     print(valid)
+    print(f'Topo dataset summary ({data_type}):')
+    for reason, count in sorted(stats.items()):
+        print(f'  {reason}: {count}')
 
 
 class EdgeVertDataset(torch.utils.data.Dataset):
@@ -295,40 +312,40 @@ class EdgeVertDataset(torch.utils.data.Dataset):
 
         if self.use_cf and self.use_pc:
             data_class = text2int[data['name'].split('_')[0]] + 1
-            return (torch.from_numpy(edgeFace_adj),           # max_num_edge*2
-                    torch.from_numpy(edge_mask),              # max_num_edge
-                    torch.from_numpy(share_id),               # max_num_edge
-                    torch.from_numpy(topo_seq).squeeze(-1),   # max_seq_length
-                    torch.from_numpy(seq_mask),               # max_seq_length
+            return (to_torch_tensor(edgeFace_adj),            # max_num_edge*2
+                    to_torch_tensor(edge_mask),               # max_num_edge
+                    to_torch_tensor(share_id),                # max_num_edge
+                    to_torch_tensor(topo_seq).squeeze(-1),    # max_seq_length
+                    to_torch_tensor(seq_mask),                # max_seq_length
                     torch.LongTensor([data_class]),           # 1
-                    torch.from_numpy(data['pc'])              # 2000*3
+                    to_torch_tensor(data['pc'])               # 2000*3
                     )
 
         elif self.use_cf:
             data_class = text2int[data['name'].split('_')[0]] + 1
-            return (torch.from_numpy(edgeFace_adj),           # max_num_edge*2
-                    torch.from_numpy(edge_mask),              # max_num_edge
-                    torch.from_numpy(share_id),               # max_num_edge
-                    torch.from_numpy(topo_seq).squeeze(-1),   # max_seq_length
-                    torch.from_numpy(seq_mask),               # max_seq_length
+            return (to_torch_tensor(edgeFace_adj),            # max_num_edge*2
+                    to_torch_tensor(edge_mask),               # max_num_edge
+                    to_torch_tensor(share_id),                # max_num_edge
+                    to_torch_tensor(topo_seq).squeeze(-1),    # max_seq_length
+                    to_torch_tensor(seq_mask),                # max_seq_length
                     torch.LongTensor([data_class])            # 1
                     )
 
         elif self.use_pc:
-            return (torch.from_numpy(edgeFace_adj),           # max_num_edge*2
-                    torch.from_numpy(edge_mask),              # max_num_edge
-                    torch.from_numpy(share_id),               # max_num_edge
-                    torch.from_numpy(topo_seq).squeeze(-1),   # max_seq_length
-                    torch.from_numpy(seq_mask),               # max_seq_length
-                    torch.from_numpy(data['pc'])              # 2000*3
+            return (to_torch_tensor(edgeFace_adj),            # max_num_edge*2
+                    to_torch_tensor(edge_mask),               # max_num_edge
+                    to_torch_tensor(share_id),                # max_num_edge
+                    to_torch_tensor(topo_seq).squeeze(-1),    # max_seq_length
+                    to_torch_tensor(seq_mask),                # max_seq_length
+                    to_torch_tensor(data['pc'])               # 2000*3
                     )
 
         else:
-            return (torch.from_numpy(edgeFace_adj),           # max_num_edge*2
-                    torch.from_numpy(edge_mask),              # max_num_edge
-                    torch.from_numpy(share_id),               # max_num_edge
-                    torch.from_numpy(topo_seq).squeeze(-1),   # max_seq_length
-                    torch.from_numpy(seq_mask)                # max_seq_length
+            return (to_torch_tensor(edgeFace_adj),            # max_num_edge*2
+                    to_torch_tensor(edge_mask),               # max_num_edge
+                    to_torch_tensor(share_id),                # max_num_edge
+                    to_torch_tensor(topo_seq).squeeze(-1),    # max_seq_length
+                    to_torch_tensor(seq_mask)                 # max_seq_length
                     )
 
 
@@ -356,9 +373,9 @@ class FaceEdgeDataset(torch.utils.data.Dataset):
 
         if self.use_cf:
             data_class = text2int[data['name'].split('_')[0]] + 1
-            return torch.from_numpy(fef_adj), torch.from_numpy(mask), torch.LongTensor([data_class])
+            return to_torch_tensor(fef_adj), to_torch_tensor(mask), torch.LongTensor([data_class])
         else:
-            return torch.from_numpy(fef_adj), torch.from_numpy(mask)
+            return to_torch_tensor(fef_adj), to_torch_tensor(mask)
 
 
 if __name__ == '__main__':

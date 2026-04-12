@@ -21,7 +21,8 @@ class FaceEdgeTrainer:
                               nhead=args.FaceEdgeModel['nhead'],
                               n_layers=args.FaceEdgeModel['n_layers'],
                               num_categories=args.edge_classes,
-                              use_cf=self.use_cf)
+                              use_cf=self.use_cf,
+                              use_pc=self.use_pc)
         model = nn.DataParallel(model)  # distributed training
         self.model = model.to(self.device).train()
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -56,11 +57,18 @@ class FaceEdgeTrainer:
         for data in self.train_dataloader:
             with torch.cuda.amp.autocast():
                 data = [x.to(self.device) for x in data]
-                if self.use_cf:
+                if self.use_cf and self.use_pc:
+                    fef_adj, _, class_label, point_data = data                     # b*nf*nf, b*nf, b*1, b*2000*3
+                elif self.use_cf:
                     fef_adj, _, class_label = data                                 # b*nf*nf, b*nf, b*1
+                    point_data = None
+                elif self.use_pc:
+                    fef_adj, _, point_data = data                                  # b*nf*nf, b*nf, b*2000*3
+                    class_label = None
                 else:
                     fef_adj, _ = data                                              # b*nf*nf, b*nf
                     class_label = None
+                    point_data = None
                 upper_indices = torch.triu_indices(fef_adj.shape[1], fef_adj.shape[1], offset=1)
                 fef_adj_upper = fef_adj[:, upper_indices[0], upper_indices[1]]     # b*seq_len
 
@@ -68,7 +76,7 @@ class FaceEdgeTrainer:
                 self.optimizer.zero_grad()
 
                 # b*seq_len*m, b*latent_dim, b*latent_dim
-                adj, mu, logvar = self.model(fef_adj_upper, class_label)
+                adj, mu, logvar = self.model(fef_adj_upper, class_label, point_data)
 
                 # Loss
                 assert not torch.isnan(adj).any()
@@ -107,16 +115,23 @@ class FaceEdgeTrainer:
         for data in self.val_dataloader:
             with torch.no_grad():
                 data = [x.to(self.device) for x in data]
-                if self.use_cf:
+                if self.use_cf and self.use_pc:
+                    fef_adj, _, class_label, point_data = data
+                elif self.use_cf:
                     fef_adj, _, class_label = data                                 # b*nf*nf, b*nf, b*1
+                    point_data = None
+                elif self.use_pc:
+                    fef_adj, _, point_data = data
+                    class_label = None
                 else:
                     fef_adj, _ = data                                              # b*nf*nf, b*nf
                     class_label = None
+                    point_data = None
                 upper_indices = torch.triu_indices(fef_adj.shape[1], fef_adj.shape[1], offset=1)
                 fef_adj_upper = fef_adj[:, upper_indices[0], upper_indices[1]]     # b*seq_len
 
                 # b*seq_len*m, b*latent_dim, b*latent_dim
-                adj, mu, logvar = self.model(fef_adj_upper, class_label)
+                adj, mu, logvar = self.model(fef_adj_upper, class_label, point_data)
                 # Loss
                 assert not torch.isnan(adj).any()
                 kl_divergence = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
@@ -157,7 +172,8 @@ class EdgeVertTrainer:
                               max_edge=args.max_edge,
                               d_model=args.EdgeVertModel['d_model'],
                               n_layers=args.EdgeVertModel['n_layers'],
-                              use_cf=self.use_cf)
+                              use_cf=self.use_cf,
+                              use_pc=self.use_pc)
         model = nn.DataParallel(model)  # distributed training
         self.model = model.to(self.device).train()
         self.train_dataloader = torch.utils.data.DataLoader(train_dataset,
@@ -207,11 +223,18 @@ class EdgeVertTrainer:
         for data in self.train_dataloader:
             with torch.cuda.amp.autocast():
                 data = [x.to(self.device) for x in data]
-                if self.use_cf:
+                if self.use_cf and self.use_pc:
+                    edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask, class_label, point_data = data
+                elif self.use_cf:
                     edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask, class_label = data    # b*ne*2, b*1, b*ne, b*ns, b*1, b*1
+                    point_data = None
+                elif self.use_pc:
+                    edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask, point_data = data
+                    class_label = None
                 else:
                     edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask = data                 # b*ne*2, b*1, b*ne, b*ns, b*1
                     class_label = None
+                    point_data = None
                 ne = edge_mask.max()
                 ns = seq_mask.max()
                 edgeFace_adj = edgeFace_adj[:, :ne, :]
@@ -221,7 +244,7 @@ class EdgeVertTrainer:
                 edge_mask = make_mask(edge_mask, ne)      # b*ne
                 seq_mask = make_mask(seq_mask, ns)        # b*ns
 
-                logits = self.model(edgeFace_adj, edge_mask, topo_seq, seq_mask, share_id, class_label)       # b*ns*(ne+2)
+                logits = self.model(edgeFace_adj, edge_mask, topo_seq, seq_mask, share_id, class_label, point_data)       # b*ns*(ne+2)
 
                 # Zero gradient
                 self.optimizer.zero_grad()
@@ -259,11 +282,18 @@ class EdgeVertTrainer:
         for data in self.val_dataloader:
             with torch.no_grad():
                 data = [x.to(self.device) for x in data]
-                if self.use_cf:
+                if self.use_cf and self.use_pc:
+                    edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask, class_label, point_data = data
+                elif self.use_cf:
                     edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask, class_label = data    # b*ne*2, b*1, b*ne, b*ns, b*1, b*1
+                    point_data = None
+                elif self.use_pc:
+                    edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask, point_data = data
+                    class_label = None
                 else:
                     edgeFace_adj, edge_mask, share_id, topo_seq, seq_mask = data                 # b*ne*2, b*1, b*ne, b*ns, b*1
                     class_label = None
+                    point_data = None
                 ne = edge_mask.max()
                 ns = seq_mask.max()
                 edgeFace_adj = edgeFace_adj[:, :ne, :]
@@ -273,7 +303,7 @@ class EdgeVertTrainer:
                 edge_mask = make_mask(edge_mask, ne)      # b*ne
                 seq_mask = make_mask(seq_mask, ns)        # b*ns
 
-                logits = self.model(edgeFace_adj, edge_mask, topo_seq, seq_mask, share_id, class_label)       # b*ns*(ne+2)
+                logits = self.model(edgeFace_adj, edge_mask, topo_seq, seq_mask, share_id, class_label, point_data)       # b*ns*(ne+2)
 
                 # Loss
                 loss = self.train_loss(logits, topo_seq, seq_mask)
